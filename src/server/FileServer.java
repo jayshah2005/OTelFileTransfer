@@ -1,5 +1,7 @@
 package server;
 
+import Configs.Config;
+
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -7,7 +9,7 @@ import java.nio.file.*;
 
 // import java.util.concurrent.*; // multithreading??? e.e
 
-/*
+/**
     * FileServer - a simple TCP server that receives files from clients.
     *
     * Protocol (what the client sends):
@@ -17,7 +19,6 @@ import java.nio.file.*;
     *
     * the server writes each received file under a chosen output folder.
  */
-
 public class FileServer {
 
     private final int port;
@@ -29,24 +30,13 @@ public class FileServer {
      * @param port           the TCP port number to listen on
      * @param outputDir      the folder where incoming files will be stored
      */
-
     public FileServer(int port, Path outputDir) throws IOException {
         this.port = port;
         this.outputDir = outputDir;
         Files.createDirectories(outputDir);     // ensure the folder/directory exists (if not create it)
     }
 
-    // ---------- main ----------
-    public static void main(String[] args) throws IOException {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : 5050;
-        Path outDir = Paths.get(args.length > 1 ? args[1] : "server-out");
-
-        // create server instance and start it
-        FileServer server = new FileServer(port, outDir);
-        server.start();
-    }
-
-    /*
+    /**
         * starts the server: listens for client connections and handles them.
      */
     private void start() {
@@ -68,11 +58,10 @@ public class FileServer {
     }
 
 
-    /*
+    /**
         * reads incoming file data from a single client
         * only handles one client at a time (sequentially)
      */
-
     private void handleClient(Socket socket) {
         try (socket; DataInputStream in = new DataInputStream(
                 new BufferedInputStream(socket.getInputStream()))) {
@@ -101,7 +90,6 @@ public class FileServer {
      * @param relPath   the relative path (e.g., "data/test.txt")
      * @param size      the file size in the bytes
      */
-
     private void saveFile(DataInputStream in, String relPath, long size) throws IOException {
         // resolve target path relative to outputDir
         Path target = outputDir.resolve(relPath).normalize();
@@ -132,9 +120,19 @@ public class FileServer {
                 remaining -= bytesRead;
             }
         }
-
         System.out.printf("[Server] Saved %s (%d bytes)%n", target, size);
+    }
 
+    public static void main(String[] args) throws IOException {
+
+        Config config = Config.getInstance();
+
+        int port = config.port;
+        Path outDir = Paths.get(args.length > 1 ? args[1] : "server-out");
+
+        // create server instance and start it
+        FileServer server = new FileServer(port, outDir);
+        server.start();
     }
 }
 
