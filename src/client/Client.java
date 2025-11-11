@@ -11,16 +11,16 @@ import java.util.List;
 /**
  * Class that manages the GUI client
  */
-public class Client {
+public class Client implements Runnable {
 
     private final int port;
     private final String host;
-    private final Path inputDir;
+    private final Path file;
 
-    Client(int port, String host, Path inputDir) {
+    Client(int port, String host, Path file) {
         this.port = port;
         this.host = host;
-        this.inputDir = inputDir;
+        this.file = file;
     }
 
     /**
@@ -31,59 +31,24 @@ public class Client {
      * - send empty path "" to signal completion
      */
 
-    public void start(){
+    public void run(){
         System.out.println("Client starting...");
         System.out.println("Connecting to " + host + ":" + port);
-        System.out.println("Input folder: " + inputDir.toAbsolutePath());
 
-        try {
-            List<Path> files = collectFiles(inputDir);
-            if (files.isEmpty()) {
-                System.out.println("No files found in " + inputDir + ". Nothing to send it seems");
-                return;
-            }
+        try (Socket socket = new Socket(host, port);
+        DataOutputStream out = new DataOutputStream(
+                new BufferedOutputStream(socket.getOutputStream()))) {
+            sendSingleFile(file, out);
 
-            try (Socket socket = new Socket(host, port);
-            DataOutputStream out = new DataOutputStream(
-                    new BufferedOutputStream(socket.getOutputStream()))) {
-                for (Path file : files) {
-                    sendSingleFile(file, out);
-                }
+            // send empty path to tell the server we are done
+            out.writeUTF("");
+            out.flush();
 
-                // send empty path to tell the server we are done
-                out.writeUTF("");
-                out.flush();
-
-                System.out.println("All files sent. Closing connection.");
-            }
-        } catch (IOException e) {
-            System.out.println("Client error: " + e.getMessage());
-//            e.printStackTrace();
+            System.out.println(file.getFileName() + " sent. Closing connection.");
+        } catch (IOException e){
+            System.out.println("Client error. Failed to send file: " + file.getFileName() + "\n" + e.getMessage());
         }
-
     }
-
-    /**
-     * recursively collects all regular files under the given directory
-     * @param root the root directory to start collecting from
-     */
-
-    private List<Path> collectFiles(Path root) throws IOException {
-        List<Path> files = new ArrayList<>();
-        if(!Files.exists(root)) {
-            System.out.println("Input directory does not exist: " + root);
-            return files;
-        }
-
-        try (var stream = Files.walk(root)) {
-            stream.filter(Files::isRegularFile)
-                  .forEach(files::add);
-        }
-
-        System.out.println("Found " + files.size() + " file(s) to send.");
-        return files;
-    }
-
 
     /**
      *  sends a single file to the server following the protocol:
@@ -94,13 +59,13 @@ public class Client {
 
     private void sendSingleFile(Path file, DataOutputStream out) throws IOException {
         // make relative path so server can reconstruct directory structure
-        String relative = inputDir.relativize(file).toString().replace(File.separatorChar, '/');
+        String relative = file.getFileName().toString();
 
         long size = Files.size(file);
 
         System.out.println("Sending file: " + relative + " (" + size + " bytes)");
 
-        // 1) send path
+        // 1) send name
         out.writeUTF(relative);
 
         // 2) send size
@@ -124,47 +89,5 @@ public class Client {
 
         out.flush();
         System.out.println("Finished sending: " + relative);
-    }
-
-
-
-
-//    /**
-//     * TODO: Figure out a way to send all files over to the server
-//     * @return a boolean if files were sent successfully
-//     */
-//    Boolean sendFiles(){
-//
-//        if(!client.isConnected()){
-//            System.out.println("Client not connected");
-//            return false;
-//        }
-//
-//        DataOutputStream out;
-//        InputStream in;
-//
-//        try {
-//            out = new DataOutputStream();
-//            in = client.getInputStream();
-//
-//
-//        } catch (IOException e) {
-//            System.out.println("Client failed to connect: " + e.getMessage());
-//        }
-//
-//        return true;
-//    }
-
-    public static void main(String[] args) {
-
-        Config config = Config.getInstance();
-        int port = config.port;
-        String host = config.host;
-
-        // let the user pass a custom input folder as the first argument
-        Path inDir = Paths.get(args.length > 0 ? args[0] : "files2transfer");
-
-        Client client = new Client(port, host, inDir);
-        client.start();
     }
 }

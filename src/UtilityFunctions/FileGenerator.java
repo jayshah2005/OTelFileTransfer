@@ -19,7 +19,7 @@ public class FileGenerator {
     }
 
     public FileGenerator() {
-        this("clientFiles", 20);
+        this("files2transfer", 20);
     }
 
     /**

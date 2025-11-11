@@ -1,0 +1,85 @@
+package client;
+
+import Configs.Config;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+
+public class ClientRunner {
+
+    private final int port;
+    private final String host;
+    private final Path inputDir;
+    List<Path> files;
+
+    ClientRunner(int port, String host, Path inputDir) {
+        this.port = port;
+        this.host = host;
+        this.inputDir = inputDir;
+        this.getFiles();
+    }
+
+    public void run() throws IOException {
+        for(Path file : this.files){
+            Client c = new Client(port, host, file);
+            new Thread(c).start();
+        }
+    }
+
+    private void getFiles() {
+
+        System.out.println("Input folder: " + inputDir.toAbsolutePath());
+
+        try {
+            this.files = collectFiles(inputDir);
+            if (files.isEmpty()) {
+                System.out.println("No files found in " + inputDir + ". Nothing to send it seems");
+                return;
+            }
+        } catch (IOException e) {
+            System.out.println("Client error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * recursively collects all regular files under the given directory
+     * @param root the root directory to start collecting from
+     */
+
+    private List<Path> collectFiles(Path root) throws IOException {
+        List<Path> files = new ArrayList<>();
+        if(!Files.exists(root)) {
+            System.out.println("Input directory does not exist: " + root);
+            return files;
+        }
+
+        try (var stream = Files.walk(root)) {
+            stream.filter(Files::isRegularFile)
+                    .forEach(files::add);
+        }
+
+        System.out.println("Found " + files.size() + " file(s) to send.");
+        return files;
+    }
+
+    public static void main(String[] args) {
+        Config config = Config.getInstance();
+        int port = config.port;
+        String host = config.host;
+        Path inDir = Paths.get(args.length > 0 ? args[0] : "files2transfer");
+
+        ClientRunner cl = new ClientRunner(port, host, inDir);
+
+        try {
+            cl.run();
+            System.out.println("Files sent successfully.");
+        } catch (IOException e) {
+            System.out.println("Exiting client runner.");
+        }
+
+    }
+}
