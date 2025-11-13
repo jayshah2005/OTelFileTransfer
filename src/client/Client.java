@@ -9,6 +9,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * Class that manages the GUI client
@@ -58,57 +59,78 @@ public class Client implements Runnable {
      *  3) file bytes
      */
     private void sendSingleFile(Path file, DataOutputStream out) throws IOException {
-        // make relative path so server can reconstruct directory structure
-        String relative = file.getFileName().toString();
+        String filename = file.getFileName().toString();
 
-        long size = Files.size(file);
+        System.out.println("Compressing & sending file: " + filename);
 
-        System.out.println("Sending file: " + relative + " (" + size + " bytes)");
+        // 1. Read + compress file into byte[]
+        byte[] compressedBytes = compressFile(file);
+        long compressedSize = compressedBytes.length;
 
-
+        // 2. Calculate checksum **after compression**
+        String checksum;
         try {
-            // 1. Calculate checksum
-            String checksum = calculateChecksum(file.toFile());
-            out.writeUTF(checksum);
-
-            // 2. send name
-            out.writeUTF(relative);
-
-            // 3. send size
-            out.writeLong(size);
-
-            // 4. send bytes in chunks
-            InputStream in = new BufferedInputStream(Files.newInputStream(file));
-            byte[] buffer = new byte[8192];
-            long remaining = size;
-
-            while (remaining > 0) {
-                int toRead =  (int) Math.min(buffer.length, remaining);
-                int read = in.read(buffer, 0, toRead);
-                if (read == -1) {
-                    break; // EOF reached unexpectedly, but won't hang
-                }
-                out.write(buffer, 0, read);
-                remaining -= read;
-            }
+            checksum = calculateChecksum(compressedBytes);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         }
 
+        // --- SEND METADATA ---
+        out.writeUTF(checksum);          // compressed checksum
+        out.writeUTF(filename);          // original filename
+        out.writeLong(compressedSize);   // compressed size
+
+        // --- SEND COMPRESSED BYTES IN CHUNKS ---
+        long remaining = compressedSize;
+        byte[] buffer = new byte[8192];
+        int offset = 0;
+
+        while (remaining > 0) {
+            int chunk = (int) Math.min(buffer.length, remaining);
+            System.arraycopy(compressedBytes, offset, buffer, 0, chunk);
+
+            out.write(buffer, 0, chunk);
+
+            offset += chunk;
+            remaining -= chunk;
+        }
+
         out.flush();
-        System.out.println("Finished sending: " + relative);
+        System.out.println("Finished sending compressed: " + filename +
+                " (" + compressedSize + " bytes)");
     }
 
-    private static String calculateChecksum(File file) throws IOException, NoSuchAlgorithmException {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (InputStream fis = new FileInputStream(file)) {
-            byte[] buffer = new byte[4096];
-            int bytesRead;
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                digest.update(buffer, 0, bytesRead);
+    /**
+     * Compress a given file
+     * @param path the path where the file is located
+     */
+    private byte[] compressFile(Path path) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+        try (GZIPOutputStream gzip = new GZIPOutputStream(baos);
+             InputStream in = new BufferedInputStream(Files.newInputStream(path))) {
+
+            byte[] buffer = new byte[8192];
+            int read;
+
+            while ((read = in.read(buffer)) != -1) {
+                gzip.write(buffer, 0, read);
             }
         }
-        return bytesToHex(digest.digest());
+
+        return baos.toByteArray();
+    }
+
+    /**
+     * Calculate checksum for a given array of bytes
+     */
+    private String calculateChecksum(byte[] data) throws NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(data);
+
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hash) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 
     private static String bytesToHex(byte[] bytes) {

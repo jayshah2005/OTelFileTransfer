@@ -7,6 +7,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * A thread to handle a client
@@ -15,8 +17,6 @@ public class ServerThread implements Runnable {
 
     final Socket socket;
     private final Path outputDir;
-    String originalChecksum;
-
 
     ServerThread(Socket socket, Path outputDir) {
         this.socket = socket;
@@ -34,7 +34,7 @@ public class ServerThread implements Runnable {
             while (in.available() != -1) {
 
                 // Get the original checksum
-                originalChecksum = in.readUTF();
+                String originalChecksum = in.readUTF();
                 String relPath = in.readUTF();
 
                 // empty string means client is done sending
@@ -42,7 +42,7 @@ public class ServerThread implements Runnable {
 
                 long size = in.readLong();
 
-                saveFile(in, relPath, size);
+                saveFile(in, relPath, size, originalChecksum);
             }
 
             System.out.println("[Server] Client finished.");
@@ -56,65 +56,88 @@ public class ServerThread implements Runnable {
 }
 
     /**
-     * saves one file from the input stream to the output directory
+     * Saves one compressed file from the client, verifies checksum,
+     * decompresses it, then writes the original file to disk.
      *
-     * @param in        the input stream to from the client
-     * @param relPath   the relative path (e.g., "data/test.txt")
-     * @param size      the file size in the bytes
+     * @param in        input stream from the client
+     * @param relPath   relative filename
+     * @param size      compressed size (in bytes)
+     * @param originalChecksum expected checksum of compressed data
      */
-    private void saveFile(DataInputStream in, String relPath, long size) throws IOException {
+    private void saveFile(DataInputStream in, String relPath, long size, String originalChecksum) throws IOException {
 
-        // resolve target path relative to outputDir
+        // Resolve target safely
         Path target = outputDir.resolve(relPath).normalize();
 
-        // prevent writing files outside outputDir (for security)
         if (!target.startsWith(outputDir)) {
             throw new IOException("Blocked unsafe path: " + relPath);
         }
 
-        // make sure parent folders exist (e.g., "server-out/data/")
         if (target.getParent() != null) {
             Files.createDirectories(target.getParent());
         }
 
-        // create file output stream and copy bytes from the network
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-            OutputStream out = new BufferedOutputStream(Files.newOutputStream(target));
-            byte[] buffer = new byte[8192];     // 8 KB buffer for reading chunks
-            long remaining = size;              // bytes left to read
+        // --- 1) Read compressed bytes ---
+        byte[] compressedData = new byte[(int) size];
 
-            while (remaining > 0) {
-                // read up to buffer size or remaining bytes
-                int bytesRead = in.read(buffer, 0, (int) Math.min(buffer.length, remaining));
-                if (bytesRead == -1) { // watch: might cause an issue
-                    throw new EOFException("Unexpected end of stream");
-                }
-
-                out.write(buffer, 0, bytesRead);
-                digest.update(buffer, 0, bytesRead);
-                remaining -= bytesRead;
+        int totalRead = 0;
+        while (totalRead < size) {
+            int read = in.read(compressedData, totalRead, (int) (size - totalRead));
+            if (read == -1) {
+                throw new EOFException("Unexpected end of stream (reading compressed data)");
             }
-        } catch (Exception e) {
+            totalRead += read;
+        }
+
+        // --- 2) Verify checksum of compressed data ---
+        String computedChecksum;
+        try {
+            computedChecksum = calculateChecksum(compressedData);
+        } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         }
 
-        // Compare the checksums
-        String computedChecksum = bytesToHex(digest.digest());
-        if (computedChecksum.equals(originalChecksum)) {
-            System.out.println("✅ File received successfully. Checksum matches.");
-        } else {
-            System.out.println("❌ Checksum mismatch! File may be corrupted.");
+        if (!computedChecksum.equals(originalChecksum)) {
+            System.out.println("❌ Checksum mismatch! Compressed file corrupted.");
             System.out.println("Expected: " + originalChecksum);
             System.out.println("Received: " + computedChecksum);
+            return;
         }
-        System.out.printf("[Server] Saved %s (%d bytes)%n", target, size);
+
+        System.out.println("✅ Compressed checksum verified for: " + relPath);
+
+        // --- 3) Decompress ---
+        byte[] decompressedData = decompress(compressedData);
+
+        // --- 4) Save decompressed output ---
+        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(target))) {
+            out.write(decompressedData);
+        }
+
+        System.out.printf("[Server] Saved %s (%d bytes decompressed)%n", target, decompressedData.length);
     }
 
-    private static String bytesToHex(byte[] bytes) {
+    private byte[] decompress(byte[] compressed) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+        try (GZIPInputStream gzip = new GZIPInputStream(new ByteArrayInputStream(compressed))) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = gzip.read(buffer)) != -1) {
+                baos.write(buffer, 0, read);
+            }
+        }
+
+        return baos.toByteArray();
+    }
+
+    private String calculateChecksum(byte[] data) throws NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(data);
+
         StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) sb.append(String.format("%02x", b));
+        for (byte b : hash) sb.append(String.format("%02x", b));
         return sb.toString();
     }
+
 }
