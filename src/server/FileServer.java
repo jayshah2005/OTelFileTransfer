@@ -10,7 +10,7 @@ import java.nio.file.*;
 // import java.util.concurrent.*; // multithreading??? e.e
 
 /**
-    * FileServer - a simple TCP server that receives files from clients.
+    * FileServer - a multithreaded TCP server that can receives files from multiple clients.
     *
     * Protocol (what the client sends):
     * 1. UTF string for file path ("" = done, stop receiving)

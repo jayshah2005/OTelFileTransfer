@@ -1,5 +1,8 @@
 package Configs;
 
+/**
+ * Config class which hosts all the global variables
+ */
 public class Config {
 
     private static Config instance = new Config();

@@ -9,6 +9,9 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Class to run all the clients together
+ */
 public class ClientRunner {
 
     private final int port;
@@ -16,6 +19,12 @@ public class ClientRunner {
     private final Path inputDir;
     List<Path> files;
 
+    /**
+     *
+     * @param port the port all the clients will conenct to
+     * @param host the hostname that client will connect to
+     * @param inputDir the input directory of all the files
+     */
     ClientRunner(int port, String host, Path inputDir) {
         this.port = port;
         this.host = host;
@@ -23,6 +32,9 @@ public class ClientRunner {
         this.getFiles();
     }
 
+    /**
+     * Run all the clients
+     */
     public void run() throws IOException {
         for(Path file : this.files){
             Client c = new Client(port, host, file);
@@ -30,6 +42,9 @@ public class ClientRunner {
         }
     }
 
+    /**
+     * Get files from the input directory
+     */
     private void getFiles() {
 
         System.out.println("Input folder: " + inputDir.toAbsolutePath());
@@ -49,7 +64,6 @@ public class ClientRunner {
      * recursively collects all regular files under the given directory
      * @param root the root directory to start collecting from
      */
-
     private List<Path> collectFiles(Path root) throws IOException {
         List<Path> files = new ArrayList<>();
         if(!Files.exists(root)) {

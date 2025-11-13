@@ -1,5 +1,6 @@
 # Transfer Files
 clientFiles/
+files2transfer/
 
 # Compiled class file
 *.class

@@ -30,7 +30,6 @@ public class Client implements Runnable {
      * - send each file (path + size + bytes)
      * - send empty path "" to signal completion
      */
-
     public void run(){
         System.out.println("Client starting...");
         System.out.println("Connecting to " + host + ":" + port);
@@ -56,7 +55,6 @@ public class Client implements Runnable {
      *  2) long size
      *  3) file bytes
      */
-
     private void sendSingleFile(Path file, DataOutputStream out) throws IOException {
         // make relative path so server can reconstruct directory structure
         String relative = file.getFileName().toString();

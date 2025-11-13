@@ -12,12 +12,20 @@ public class FileGenerator {
     private int numFiles;
     private Random random;
 
+    /**
+     * Initialize the file generator class
+     * @param folderName name of the folder where we want to store the files
+     * @param numFiles number of files we want to store
+     */
     public FileGenerator(String folderName, int numFiles) {
         this.folderName = folderName;
         this.numFiles = numFiles;
         this.random = new Random();
     }
 
+    /**
+     * Generate 20 file
+     */
     public FileGenerator() {
         this("files2transfer", 20);
     }
@@ -57,7 +65,7 @@ public class FileGenerator {
     }
 
     /**
-     * Generates random files
+     * Generates random files of random size
      */
     public void generateFiles() {
         createFolder();

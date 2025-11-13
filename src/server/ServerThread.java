@@ -5,10 +5,14 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+/**
+ * A thread to handle a client
+ */
 public class ServerThread implements Runnable {
 
     final Socket socket;
     private final Path outputDir;
+
 
     ServerThread(Socket socket, Path outputDir) {
         this.socket = socket;
