@@ -48,12 +48,10 @@ public class ClientRunner {
     private void getFiles() {
 
         System.out.println("Input folder: " + inputDir.toAbsolutePath());
-
         try {
             this.files = collectFiles(inputDir);
             if (files.isEmpty()) {
                 System.out.println("No files found in " + inputDir + ". Nothing to send it seems");
-                return;
             }
         } catch (IOException e) {
             System.out.println("Client error: " + e.getMessage());
@@ -94,6 +92,5 @@ public class ClientRunner {
         } catch (IOException e) {
             System.out.println("Exiting client runner.");
         }
-
     }
 }

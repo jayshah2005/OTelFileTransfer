@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
 
 /**
  * A thread to handle a client
@@ -29,31 +28,39 @@ public class ServerThread implements Runnable {
      */
     @Override
     public void run() {
-        try (this.socket; DataInputStream in = new DataInputStream(
-                new BufferedInputStream(this.socket.getInputStream()))) {
-            while (in.available() != -1) {
+        try (
+                Socket s = this.socket;   // auto-close socket
+                DataInputStream in = new DataInputStream(
+                        new BufferedInputStream(s.getInputStream()))
+        ) {
+            while (true) {
+                // --- Read metadata ---
+                String checksum = in.readUTF();
+                String relPath  = in.readUTF();
 
-                // Get the original checksum
-                String originalChecksum = in.readUTF();
-                String relPath = in.readUTF();
-
-                // empty string means client is done sending
-                if (relPath.isEmpty()) break;
+                // Empty path = client finished
+                if (relPath.isEmpty()) {
+                    System.out.println("[Server] Client sent termination signal.");
+                    break;
+                }
 
                 long size = in.readLong();
 
-                saveFile(in, relPath, size, originalChecksum);
+                // --- Process file ---
+                saveFile(in, relPath, size, checksum);
             }
 
             System.out.println("[Server] Client finished.");
+
         } catch (EOFException eof) {
             System.out.println("[Server] Client disconnected normally.");
         } catch (SocketException se) {
             System.out.println("[Server] Connection reset by client.");
         } catch (Exception e) {
-            System.out.println("[Server] Unexpected error: " + e);
+            System.out.println("[Server] Unexpected error: " + e.getMessage());
+            e.printStackTrace();
         }
-}
+    }
 
     /**
      * Saves one compressed file from the client, verifies checksum,
@@ -62,11 +69,11 @@ public class ServerThread implements Runnable {
      * @param in        input stream from the client
      * @param relPath   relative filename
      * @param size      compressed size (in bytes)
-     * @param originalChecksum expected checksum of compressed data
+     * @param expectedChecksum expected checksum of compressed data
      */
-    private void saveFile(DataInputStream in, String relPath, long size, String originalChecksum) throws IOException {
+    private void saveFile(DataInputStream in, String relPath, long size, String expectedChecksum) throws IOException {
 
-        // Resolve target safely
+        // 0) Resolve and validate output path
         Path target = outputDir.resolve(relPath).normalize();
 
         if (!target.startsWith(outputDir)) {
@@ -77,44 +84,39 @@ public class ServerThread implements Runnable {
             Files.createDirectories(target.getParent());
         }
 
-        // --- 1) Read compressed bytes ---
+        // 1) Read compressed file data
         byte[] compressedData = new byte[(int) size];
-
         int totalRead = 0;
+
         while (totalRead < size) {
             int read = in.read(compressedData, totalRead, (int) (size - totalRead));
             if (read == -1) {
-                throw new EOFException("Unexpected end of stream (reading compressed data)");
+                throw new EOFException("Unexpected end of stream while reading compressed data.");
             }
             totalRead += read;
         }
 
-        // --- 2) Verify checksum of compressed data ---
-        String computedChecksum;
-        try {
-            computedChecksum = calculateChecksum(compressedData);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
+        // 2) Verify checksum
+        String actualChecksum = calculateChecksum(compressedData);
 
-        if (!computedChecksum.equals(originalChecksum)) {
-            System.out.println("❌ Checksum mismatch! Compressed file corrupted.");
-            System.out.println("Expected: " + originalChecksum);
-            System.out.println("Received: " + computedChecksum);
+        if (!actualChecksum.equals(expectedChecksum)) {
+            System.out.println("❌ Checksum mismatch! Compressed file may be corrupted.");
+            System.out.println("   Expected: " + expectedChecksum);
+            System.out.println("   Actual:   " + actualChecksum);
             return;
         }
 
-        System.out.println("✅ Compressed checksum verified for: " + relPath);
+        System.out.println("✅ Checksum verified for: " + relPath);
 
-        // --- 3) Decompress ---
+        // 3) Decompress
         byte[] decompressedData = decompress(compressedData);
 
-        // --- 4) Save decompressed output ---
+        // 4) Write decompressed data to disk
         try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(target))) {
             out.write(decompressedData);
         }
 
-        System.out.printf("[Server] Saved %s (%d bytes decompressed)%n", target, decompressedData.length);
+        System.out.printf("[Server] Saved %s (%d bytes decompressed)%n", relPath, decompressedData.length);
     }
 
     private byte[] decompress(byte[] compressed) throws IOException {
@@ -131,13 +133,19 @@ public class ServerThread implements Runnable {
         return baos.toByteArray();
     }
 
-    private String calculateChecksum(byte[] data) throws NoSuchAlgorithmException {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hash = digest.digest(data);
+    private String calculateChecksum(byte[] data) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(data);
 
-        StringBuilder sb = new StringBuilder();
-        for (byte b : hash) sb.append(String.format("%02x", b));
-        return sb.toString();
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 algorithm not available", e);
+        }
     }
-
 }

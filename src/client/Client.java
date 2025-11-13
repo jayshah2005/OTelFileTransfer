@@ -1,14 +1,11 @@
 package client;
 
-import Configs.Config;
 
 import java.io.*;
 import java.net.Socket;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -27,36 +24,37 @@ public class Client implements Runnable {
     }
 
     /**
-     * entry point for ruuning the client logic
-     * - collect all files
-     * - open a socket to the server
-     * - send each file (path + size + bytes)
-     * - send empty path "" to signal completion
+     * entry point for running the client logic
      */
     public void run(){
         System.out.println("Client starting...");
         System.out.println("Connecting to " + host + ":" + port);
 
-        try (Socket socket = new Socket(host, port);
-        DataOutputStream out = new DataOutputStream(
-                new BufferedOutputStream(socket.getOutputStream()))) {
+        try (
+                Socket socket = new Socket(host, port);
+                DataOutputStream out = new DataOutputStream(
+                        new BufferedOutputStream(socket.getOutputStream()))
+        ) {
+            System.out.println("Connected. Sending file: " + file.getFileName());
+
+            // Send the file
             sendSingleFile(file, out);
 
-            // send empty path to tell the server we are done
+            // Signal that no more files will be sent
             out.writeUTF("");
             out.flush();
 
-            System.out.println(file.getFileName() + " sent. Closing connection.");
-        } catch (IOException e){
-            System.out.println("Client error. Failed to send file: " + file.getFileName() + "\n" + e.getMessage());
+            System.out.println("File sent successfully. Closing connection.");
+
+        } catch (IOException e) {
+            System.out.println("Client error: Failed to send file "
+                    + file.getFileName() + "\n" + e.getMessage());
         }
+
     }
 
     /**
-     *  sends a single file to the server following the protocol:
-     *  1) UTF-8 path (relative to inputDir, using '/'
-     *  2) long size
-     *  3) file bytes
+     *  sends a single file to the server
      */
     private void sendSingleFile(Path file, DataOutputStream out) throws IOException {
         String filename = file.getFileName().toString();
@@ -67,7 +65,7 @@ public class Client implements Runnable {
         byte[] compressedBytes = compressFile(file);
         long compressedSize = compressedBytes.length;
 
-        // 2. Calculate checksum **after compression**
+        // 2. Calculate checksum after compression
         String checksum;
         try {
             checksum = calculateChecksum(compressedBytes);
@@ -130,12 +128,6 @@ public class Client implements Runnable {
 
         StringBuilder sb = new StringBuilder();
         for (byte b : hash) sb.append(String.format("%02x", b));
-        return sb.toString();
-    }
-
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) sb.append(String.format("%02x", b));
         return sb.toString();
     }
 }
