@@ -2,8 +2,11 @@ package client;
 
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.api.GlobalOpenTelemetry; // Accesses the configured Tracer
+
+import telemetry.Metrics;
 
 import java.io.*;
 import java.net.Socket;
@@ -94,14 +97,20 @@ public class Client implements Runnable {
      */
     private void sendSingleFile(Path file, DataOutputStream out) throws IOException {
         String filename = file.getFileName().toString();
+        long originalSize = Files.size(file);
 
-        Span sendFileSpan = tracer.spanBuilder("sendSingleFile").startSpan();
-        sendFileSpan.setAttribute("file.name", filename);
-        sendFileSpan.setAttribute("file.original.size", Files.size(file));
+        Span sendFileSpan = tracer.spanBuilder("sendSingleFile")
+                .setAttribute("file.name", filename)
+                .setAttribute("file.original.size", originalSize)
+                .startSpan();
+
+        // measure latency of sending this file
+        long startNanos = System.nanoTime();
 
         try (Scope scope = sendFileSpan.makeCurrent()) {
 
             System.out.println("Compressing & sending file: " + filename);
+            sendFileSpan.addEvent("send_file_started");
 
             // 1. Read + compress file into byte[] (wrapped in a child span)
             byte[] compressedBytes = compressFile(file);
@@ -117,8 +126,13 @@ public class Client implements Runnable {
             out.writeLong(compressedSize);   // compressed size
 
             // --- SEND COMPRESSED BYTES IN CHUNKS ---
-            Span transferSpan = tracer.spanBuilder("Transfer Data Chunks").startSpan();
+            Span transferSpan = tracer.spanBuilder("Transfer Data Chunks")
+                    .setAttribute("file.name", filename)
+                    .setAttribute("file.compressed.size", compressedSize)
+                    .startSpan();
+
             try (Scope transferScope = transferSpan.makeCurrent()) {
+                transferSpan.addEvent("transfer_started");
                 long remaining = compressedSize;
                 byte[] buffer = new byte[8192];
                 int offset = 0;
@@ -132,6 +146,7 @@ public class Client implements Runnable {
                     offset += chunk;
                     remaining -= chunk;
                 }
+                transferSpan.addEvent("transfer_completed");
             } finally {
                 transferSpan.end();
             }
@@ -139,12 +154,20 @@ public class Client implements Runnable {
             out.flush();
             System.out.println("Finished sending compressed: " + filename +
                     " (" + compressedSize + " bytes)");
+            sendFileSpan.addEvent("send_file_completed");
 
         } catch (NoSuchAlgorithmException e) {
             sendFileSpan.recordException(e);
             sendFileSpan.setStatus(io.opentelemetry.api.trace.StatusCode.ERROR);
             throw new IOException("Checksum error", e);
         } finally {
+            long endNanos = System.nanoTime();
+            double latencyMs = (endNanos - startNanos) / 1_000_000.0;
+
+            // Custom metrics
+            Metrics.transferLatency.record(latencyMs);
+            Metrics.filesSent.add(1);
+
             sendFileSpan.end(); // Finish send file span
         }
     }
@@ -153,8 +176,13 @@ public class Client implements Runnable {
      * Compress a given file. Now wrapped in its own span.
      */
     private byte[] compressFile(Path path) throws IOException {
-        Span compressSpan = tracer.spanBuilder("compressFile (GZIP)").startSpan();
+        Span compressSpan = tracer.spanBuilder("compressFile (GZIP)")
+                .setAttribute("file.path", path.toString())
+                .startSpan();
+
         try (Scope scope = compressSpan.makeCurrent()) {
+            compressSpan.addEvent("compression_started");
+
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
             try (GZIPOutputStream gzip = new GZIPOutputStream(baos);
@@ -167,6 +195,8 @@ public class Client implements Runnable {
                     gzip.write(buffer, 0, read);
                 }
             }
+
+            compressSpan.addEvent("compression_completed");
             return baos.toByteArray();
         } finally {
             compressSpan.end();
@@ -177,13 +207,19 @@ public class Client implements Runnable {
      * Calculate checksum for a given array of bytes. Now wrapped in its own span.
      */
     private String calculateChecksumTraced(byte[] data) throws NoSuchAlgorithmException {
-        Span checksumSpan = tracer.spanBuilder("calculateChecksum (SHA-256)").startSpan();
+        Span checksumSpan = tracer.spanBuilder("calculateChecksum (SHA-256)")
+                .setAttribute("data.size", data.length)
+                .startSpan();
+
         try (Scope scope = checksumSpan.makeCurrent()) {
+            checksumSpan.addEvent("checksum_started");
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(data);
 
             StringBuilder sb = new StringBuilder();
             for (byte b : hash) sb.append(String.format("%02x", b));
+
+            checksumSpan.addEvent("checksum_completed");
             return sb.toString();
         } finally {
             checksumSpan.end();

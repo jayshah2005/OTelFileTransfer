@@ -9,6 +9,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.zip.GZIPInputStream;
 
+import telemetry.Metrics;
+
 /**
  * A thread to handle a client
  */
@@ -117,6 +119,9 @@ public class ServerThread implements Runnable {
         }
 
         System.out.printf("[Server] Saved %s (%d bytes decompressed)%n", relPath, decompressedData.length);
+
+        // Metrics: server successfully received a file
+        Metrics.filesReceived.add(1);
     }
 
     private byte[] decompress(byte[] compressed) throws IOException {
