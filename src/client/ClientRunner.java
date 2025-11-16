@@ -44,6 +44,30 @@ public class ClientRunner {
     }
 
     /**
+     * Run all the clients to check for time
+     */
+    public void runTest() throws IOException {
+        List<Thread> threads = new ArrayList<>();
+
+        for (Path file : this.files) {
+            Client c = new Client(port, host, file);
+            Thread t = new Thread(c);
+            t.start();
+            threads.add(t);
+        }
+
+        // Wait for all threads to finish
+        for (Thread t : threads) {
+            try {
+                t.join();
+            } catch (InterruptedException e) {
+                System.err.println("Thread interrupted: " + e.getMessage());
+            }
+        }
+    }
+
+
+    /**
      * Get files from the input directory
      */
     private void getFiles() {
@@ -80,6 +104,8 @@ public class ClientRunner {
     }
 
     public static void main(String[] args) {
+        long startTime = System.nanoTime();
+
         Config config = Config.getInstance();
         int port = config.port;
         String host = config.host;
@@ -94,10 +120,15 @@ public class ClientRunner {
         ClientRunner cl = new ClientRunner(port, host, inDir);
 
         try {
-            cl.run();
+            cl.runTest();
             System.out.println("Files sent successfully.");
         } catch (IOException e) {
             System.out.println("Exiting client runner.");
         }
+
+        long endTime = System.nanoTime();
+        long duration = (endTime - startTime) / 1_000_000;
+
+        System.out.println("Total execution time: " + duration + " ms");
     }
 }
