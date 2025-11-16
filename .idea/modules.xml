@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/COSC3P95Assignment2.iml" filepath="$PROJECT_DIR$/.idea/COSC3P95Assignment2.iml" />
+      <module fileurl="file://$PROJECT_DIR$/runConfigs/runConfigs.iml" filepath="$PROJECT_DIR$/runConfigs/runConfigs.iml" />
     </modules>
   </component>
 </project>
