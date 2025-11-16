@@ -33,7 +33,9 @@ replay_pid*
 
 
 
+# Project Specific requirements
 /server-out/
-#/files2transfer/
 
-
+# Files to not ignore
+!src/otel/opentelemetry-javaagent.jar
+!src/lib/*
