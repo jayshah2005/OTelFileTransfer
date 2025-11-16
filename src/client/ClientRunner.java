@@ -1,6 +1,7 @@
 package client;
 
 import Configs.Config;
+import telemetry.TelemetryConfig;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -83,6 +84,12 @@ public class ClientRunner {
         int port = config.port;
         String host = config.host;
         Path inDir = Paths.get(args.length > 0 ? args[0] : "files2transfer");
+
+        /**
+         * OpenTelemetry init for client
+         * 1.0 = AlwaysOn sampling
+         */
+        TelemetryConfig.init("client-runner", 1.0);
 
         ClientRunner cl = new ClientRunner(port, host, inDir);
 

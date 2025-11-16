@@ -1,6 +1,7 @@
 package server;
 
 import Configs.Config;
+import telemetry.TelemetryConfig;
 
 import java.io.*;
 import java.net.ServerSocket;
@@ -64,6 +65,12 @@ public class FileServer {
 
         int port = config.port;
         Path outDir = Paths.get(args.length > 1 ? args[1] : "server-out");
+
+        /**
+         * OpenTelemetry init for server
+         * 1.0 = AlwaysOn sampling
+         */
+        TelemetryConfig.init("file-server", 1.0);
 
         // create server instance and start it
         FileServer server = new FileServer(port, outDir);
