@@ -1,5 +1,13 @@
 package server;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+
+import telemetry.Metrics;
+
 import java.io.*;
 import java.net.Socket;
 import java.net.SocketException;
@@ -9,12 +17,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.zip.GZIPInputStream;
 
-import telemetry.Metrics;
-
-/**
- * A thread to handle a client
- */
 public class ServerThread implements Runnable {
+
+    private static final Tracer tracer = GlobalOpenTelemetry.getTracer("file-server-instrumentation", "1.0.0");
 
     final Socket socket;
     private final Path outputDir;
@@ -24,58 +29,58 @@ public class ServerThread implements Runnable {
         this.outputDir = outputDir;
     }
 
-    /**
-     * reads incoming file data from a single client
-     * only handles one client at a time (sequentially)
-     */
     @Override
     public void run() {
-        try (
-                Socket s = this.socket;   // auto-close socket
-                DataInputStream in = new DataInputStream(
-                        new BufferedInputStream(s.getInputStream()))
-        ) {
+        Span serverRootSpan = tracer.spanBuilder("ServerThread").startSpan();
+
+        try (Scope rootScope = serverRootSpan.makeCurrent();
+             Socket s = this.socket;
+             DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream()))) {
+
             while (true) {
-                // --- Read metadata ---
-                String checksum = in.readUTF();
-                String relPath  = in.readUTF();
+                Span receiveSpan = tracer.spanBuilder("receiveAndSaveFile").startSpan();
 
-                // Empty path = client finished
-                if (relPath.isEmpty()) {
-                    System.out.println("[Server] Client sent termination signal.");
+                try (Scope receiveScope = receiveSpan.makeCurrent()) {
+                    String checksum = in.readUTF();
+                    String relPath = in.readUTF();
+
+                    if (relPath.isEmpty()) {
+                        receiveSpan.addEvent("termination_signal_received");
+                        System.out.println("[Server] Client sent termination signal.");
+                        break;
+                    }
+
+                    long size = in.readLong();
+                    receiveSpan.setAttribute("file.name", relPath);
+                    receiveSpan.setAttribute("file.compressed.size", size);
+
+                    saveFile(in, relPath, size, checksum);
+                } catch (EOFException eof) {
+                    receiveSpan.addEvent("client_disconnected_eof");
+                    System.out.println("[Server] Client disconnected normally (EOF).");
                     break;
+                } catch (Exception e) {
+                    receiveSpan.recordException(e);
+                    receiveSpan.setStatus(StatusCode.ERROR, "Failed to process file");
+                    throw e;
+                } finally {
+                    receiveSpan.end();
                 }
-
-                long size = in.readLong();
-
-                // --- Process file ---
-                saveFile(in, relPath, size, checksum);
             }
 
             System.out.println("[Server] Client finished.");
 
-        } catch (EOFException eof) {
-            System.out.println("[Server] Client disconnected normally.");
         } catch (SocketException se) {
             System.out.println("[Server] Connection reset by client.");
         } catch (Exception e) {
-            System.out.println("[Server] Unexpected error: " + e.getMessage());
+            System.err.println("[Server] Unexpected error: " + e.getMessage());
             e.printStackTrace();
+        } finally {
+            serverRootSpan.end();
         }
     }
 
-    /**
-     * Saves one compressed file from the client, verifies checksum,
-     * decompresses it, then writes the original file to disk.
-     *
-     * @param in        input stream from the client
-     * @param relPath   relative filename
-     * @param size      compressed size (in bytes)
-     * @param expectedChecksum expected checksum of compressed data
-     */
     private void saveFile(DataInputStream in, String relPath, long size, String expectedChecksum) throws IOException {
-
-        // 0) Resolve and validate output path
         Path target = outputDir.resolve(relPath).normalize();
 
         if (!target.startsWith(outputDir)) {
@@ -86,41 +91,64 @@ public class ServerThread implements Runnable {
             Files.createDirectories(target.getParent());
         }
 
-        // 1) Read compressed file data
-        byte[] compressedData = new byte[(int) size];
-        int totalRead = 0;
+        // --- Read compressed bytes ---
+        Span readSpan = tracer.spanBuilder("readCompressedBytes").startSpan();
+        byte[] compressedData;
+        try (Scope scope = readSpan.makeCurrent()) {
+            compressedData = new byte[(int) size];
+            int totalRead = 0;
 
-        while (totalRead < size) {
-            int read = in.read(compressedData, totalRead, (int) (size - totalRead));
-            if (read == -1) {
-                throw new EOFException("Unexpected end of stream while reading compressed data.");
+            while (totalRead < size) {
+                int read = in.read(compressedData, totalRead, (int) (size - totalRead));
+                if (read == -1) {
+                    throw new EOFException("Unexpected end of stream while reading compressed data.");
+                }
+                totalRead += read;
             }
-            totalRead += read;
+        } finally {
+            readSpan.end();
         }
 
-        // 2) Verify checksum
-        String actualChecksum = calculateChecksum(compressedData);
+        // --- Verify checksum ---
+        Span verifySpan = tracer.spanBuilder("verifyChecksum").startSpan();
+        try (Scope scope = verifySpan.makeCurrent()) {
+            String actualChecksum = calculateChecksum(compressedData);
+            verifySpan.setAttribute("expected", expectedChecksum);
+            verifySpan.setAttribute("actual", actualChecksum);
 
-        if (!actualChecksum.equals(expectedChecksum)) {
-            System.out.println("❌ Checksum mismatch! Compressed file may be corrupted.");
-            System.out.println("   Expected: " + expectedChecksum);
-            System.out.println("   Actual:   " + actualChecksum);
-            return;
+            if (!actualChecksum.equals(expectedChecksum)) {
+                System.out.println("❌ Checksum mismatch! Compressed file may be corrupted.");
+                System.out.println("   Expected: " + expectedChecksum);
+                System.out.println("   Actual:   " + actualChecksum);
+                return;
+            }
+        } finally {
+            verifySpan.end();
         }
 
         System.out.println("✅ Checksum verified for: " + relPath);
 
-        // 3) Decompress
-        byte[] decompressedData = decompress(compressedData);
+        // --- Decompress ---
+        byte[] decompressedData;
+        Span decompressSpan = tracer.spanBuilder("decompress").startSpan();
+        try (Scope scope = decompressSpan.makeCurrent()) {
+            decompressedData = decompress(compressedData);
+            decompressSpan.setAttribute("file.decompressed.size", decompressedData.length);
+        } finally {
+            decompressSpan.end();
+        }
 
-        // 4) Write decompressed data to disk
-        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(target))) {
+        // --- Write to disk ---
+        Span writeSpan = tracer.spanBuilder("writeToDisk").startSpan();
+        try (Scope scope = writeSpan.makeCurrent();
+             OutputStream out = new BufferedOutputStream(Files.newOutputStream(target))) {
+
             out.write(decompressedData);
+        } finally {
+            writeSpan.end();
         }
 
         System.out.printf("[Server] Saved %s (%d bytes decompressed)%n", relPath, decompressedData.length);
-
-        // Metrics: server successfully received a file
         Metrics.filesReceived.add(1);
     }
 
