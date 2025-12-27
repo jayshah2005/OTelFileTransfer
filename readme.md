@@ -594,14 +594,6 @@ All JARs are included in `src/lib/`:
 
 - `opentelemetry-javaagent.jar` (in `src/otel/`)
 
-## License
-
-This project is part of a university assignment (COSC 3P95) and is for educational purposes.
-
-## Author
-
-Developed as part of COSC 3P95 Assignment 2, Question 1 - OpenTelemetry Distributed Tracing.
-
 ---
 
 ## Quick Reference
